@@ -11,6 +11,8 @@ import {
 } from '../pokemon'
 import {createResource} from '../utils'
 
+
+
 function PokemonInfo({pokemonResource}) {
   const pokemon = pokemonResource.read()
   return (
@@ -29,21 +31,69 @@ const SUSPENSE_CONFIG = {
   busyMinDurationMs: 700,
 }
 
-// 🐨 create a pokemonResourceCache object
 
-// 🐨 create a getPokemonResource function which accepts a name checks the cache
-// for an existing resource. If there is none, then it creates a resource
-// and inserts it into the cache. Finally the function should return the
-// resource.
 
 function createPokemonResource(pokemonName) {
   return createResource(fetchPokemon(pokemonName))
 }
 
+
+
+let PokemonResourceContext = React.createContext()
+
+
+function PokemonCacheProvider({children, cacheTime}) {
+  const cache = React.useRef({})
+  const expirations = React.useRef({})
+
+  React.useEffect(() => {
+   const interval = setInterval(() => {
+    for (const [name, time] of Object.entries(expirations.current)) {
+      if (time < Date.now()) {
+        delete cache.current[name]
+        delete expirations.current[name]
+      }
+    }
+   }, 1000)
+    return () => clearInterval(interval)
+  },[])
+
+  const getPokemonResource = React.useCallback((name) => {
+    let nameLower = name.toLowerCase();
+    let resource = cache.current[nameLower]
+    if(!resource){
+      resource = createPokemonResource(nameLower)
+      cache.current[nameLower] = resource
+    }
+    expirations.current[nameLower] = Date.now() + cacheTime
+    console.log(cache.current, expirations.current, Date.now(), cacheTime)
+    return resource;
+  },[cacheTime])
+
+  return (
+    <PokemonResourceContext.Provider value={getPokemonResource}>
+      {children}
+    </PokemonResourceContext.Provider>
+  )
+}
+
+
+function usePokemonResourceCache() {
+  const context = React.useContext(PokemonResourceContext)
+  if (!context) {
+    throw new Error(
+      `usePokemonResourceCache should be used within a PokemonCacheProvider`,
+    )
+  }
+  return context
+}
+
+
 function App() {
   const [pokemonName, setPokemonName] = React.useState('')
   const [startTransition, isPending] = React.useTransition(SUSPENSE_CONFIG)
   const [pokemonResource, setPokemonResource] = React.useState(null)
+  const getPokemonResource = usePokemonResourceCache()
 
   React.useEffect(() => {
     if (!pokemonName) {
@@ -51,10 +101,9 @@ function App() {
       return
     }
     startTransition(() => {
-      // 🐨 change this to getPokemonResource instead
-      setPokemonResource(createPokemonResource(pokemonName))
+      setPokemonResource(getPokemonResource(pokemonName))
     })
-  }, [pokemonName, startTransition])
+  }, [pokemonName, startTransition,getPokemonResource])
 
   function handleSubmit(newPokemonName) {
     setPokemonName(newPokemonName)
@@ -66,26 +115,35 @@ function App() {
 
   return (
     <div className="pokemon-info-app">
-      <PokemonForm pokemonName={pokemonName} onSubmit={handleSubmit} />
-      <hr />
-      <div className={`pokemon-info ${isPending ? 'pokemon-loading' : ''}`}>
-        {pokemonResource ? (
-          <PokemonErrorBoundary
-            onReset={handleReset}
-            resetKeys={[pokemonResource]}
-          >
-            <React.Suspense
-              fallback={<PokemonInfoFallback name={pokemonName} />}
+        <PokemonForm pokemonName={pokemonName} onSubmit={handleSubmit} />
+        <hr />
+        <div className={`pokemon-info ${isPending ? 'pokemon-loading' : ''}`}>
+          {pokemonResource ? (
+            <PokemonErrorBoundary
+              onReset={handleReset}
+              resetKeys={[pokemonResource]}
             >
-              <PokemonInfo pokemonResource={pokemonResource} />
-            </React.Suspense>
-          </PokemonErrorBoundary>
-        ) : (
-          'Submit a pokemon'
-        )}
-      </div>
+              <React.Suspense
+                fallback={<PokemonInfoFallback name={pokemonName} />}
+              >
+                <PokemonInfo pokemonResource={pokemonResource} />
+              </React.Suspense>
+            </PokemonErrorBoundary>
+          ) : (
+            'Submit a pokemon'
+          )}
+        </div>
     </div>
   )
 }
 
-export default App
+
+function AppWithProvider() {
+  return (
+    <PokemonCacheProvider cacheTime={5000}>
+      <App />
+    </PokemonCacheProvider>
+  )
+}
+
+export default AppWithProvider
